@@ -7,7 +7,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 from tweepy import OAuthHandler, API, Client
 
 # -----------------------------
-# ENV KEYS (Senin çalışan botundaki gibi getenv ile)
+# ENV KEYS
 # -----------------------------
 API_KEY       = os.getenv("API_KEY")
 API_SECRET    = os.getenv("API_SECRET")
@@ -28,7 +28,7 @@ def ask_groq(prompt):
         data = {
             "model": "llama-3.3-70b-versatile",
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.8
+            "temperature": 0.85 # Biraz daha yaratıcı olsun
         }
         res = requests.post(url, headers=headers, json=data, timeout=20)
         if res.status_code == 200:
@@ -45,23 +45,21 @@ def enhance_image(img_path):
         img = Image.open(img_path)
         img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
         converter = ImageEnhance.Color(img)
-        img = converter.enhance(1.2)
+        img = converter.enhance(1.25) # Renkleri biraz daha patlat
         img.save("final_image.jpg", quality=95)
         return "final_image.jpg"
     except:
         return img_path
 
 # -----------------------------
-# 1. İÇERİK ÜRETİCİ (ANIME MODU)
+# 1. İÇERİK ÜRETİCİ (SAMİMİ MOD)
 # -----------------------------
 def get_anime_content():
     print("🧠 Anime içeriği aranıyor...", flush=True)
     
-    # Jikan'dan Veri Çek (Rate Limit yememek için denemeli)
     max_retries = 3
     for i in range(max_retries):
         try:
-            # Rastgele bir sayfa seç
             page = random.randint(1, 10)
             url = f"https://api.jikan.moe/v4/top/anime?page={page}"
             resp = requests.get(url, timeout=15)
@@ -72,23 +70,40 @@ def get_anime_content():
                 
                 name = item['title_english'] if item.get('title_english') else item['title']
                 img_url = item['images']['jpg']['large_image_url']
-                synopsis = item.get('synopsis', 'No info')[:600]
+                synopsis = item.get('synopsis', 'No info')[:1000] # Konuyu anlaması için daha çok veri
+                genres = [g['name'] for g in item.get('genres', [])] # Türleri al
                 
-                # Groq'a Tweet Yazdır
+                # --- GÜNCELLENMİŞ PROMPT ---
                 prompt = f"""
-                Act as 'Orbis Anime'. Write a short, engaging tweet about: {name}.
-                Context: {synopsis}
-                Rules:
-                1. Start with Title in BOLD + Emoji.
-                2. One hype sentence.
-                3. Use hashtags: #{name.replace(' ','')} #Anime.
+                Act as 'Orbis Anime', a passionate anime fan. 
+                Task: Write a detailed, engaging Twitter post about the anime: {name}.
+                
+                Anime Context: {synopsis}
+                Genres: {', '.join(genres)}
+                
+                Guidelines for Tone & Style:
+                1. DO NOT be formal. Be friendly, enthusiastic, and sincere (like recommending to a best friend).
+                2. Explain the PLOT clearly but make it sound exciting. What makes this anime special?
+                3. Use emojis freely to match the vibe (e.g., ⚔️ for action, 🌸 for romance).
+                4. Structure:
+                   - Hook Line (Title + Emojis)
+                   - The "Vibe" & Plot Summary (3-4 sentences)
+                   - Why you should watch it (Personal verdict)
+                   - Final Rating (e.g., 9/10 or Stars)
+                
+                Hashtag Rules:
+                - Create 4-5 CUSTOM hashtags based on the specific genres and theme. 
+                - Example: If it's Naruto, use #Ninja #Shonen #ActionAnime. 
+                - ALWAYS include #{name.replace(' ','')} and #OrbisAnime.
+                
+                Output ONLY the tweet text.
                 """
                 caption = ask_groq(prompt)
                 
                 if caption:
                     return name, img_url, caption
             
-            time.sleep(2) # Hata varsa az bekle
+            time.sleep(2)
         except Exception as e:
             print(f"Veri çekme hatası ({i+1}): {e}")
             time.sleep(2)
@@ -96,39 +111,31 @@ def get_anime_content():
     return None, None, None
 
 # -----------------------------
-# 2. TWITTER POST (SENİN ÇALIŞAN KODUNUN AYNISI)
+# 2. TWITTER POST (HİBRİT SİSTEM)
 # -----------------------------
 def post_to_twitter(img_url, caption):
-    # Resmi İndir
     print("⬇️ Resim indiriliyor...", flush=True)
     try:
         img_data = requests.get(img_url).content
         with open("temp.jpg", "wb") as f:
             f.write(img_data)
-        
-        # HD Yap
         filename = enhance_image("temp.jpg")
     except Exception as e:
         print(f"Resim indirme hatası: {e}")
         return False
 
-    # Twitter'a Yükle
     print("🐦 Twitter'a bağlanılıyor...", flush=True)
     try:
-        # 1. Adım: Medya Yükleme (V1.1 - Burası her zaman API objesi ister)
+        # V1.1 Auth (Resim Yüklemek İçin Şart)
         auth = OAuthHandler(API_KEY, API_SECRET)
         auth.set_access_token(ACCESS_TOKEN, ACCESS_SECRET)
         api = API(auth)
         
         media = api.media_upload(filename)
-        print("✅ Resim yüklendi, ID alındı.")
+        print("✅ Resim yüklendi.")
 
-        # 2. Adım: Tweet Atma (Senin diğer kodundaki Client yapısı)
-        # BURAYA DİKKAT: V2 (Client) hata verirse otomatik V1 (API) deneyecek sistem ekledim.
-        # Böylece o 403 hatasını bypass edebiliriz.
-        
+        # V2 Tweet (Önce Modern Yöntem)
         try:
-            # Önce senin çalışan kodundaki gibi Client (V2) deniyoruz
             client = Client(
                 consumer_key=API_KEY,
                 consumer_secret=API_SECRET,
@@ -136,37 +143,36 @@ def post_to_twitter(img_url, caption):
                 access_token_secret=ACCESS_SECRET
             )
             client.create_tweet(text=caption, media_ids=[media.media_id])
-            print("🎉 TWEET ATILDI (V2 Client ile)!")
+            print("🎉 TWEET ATILDI (Client Modu)!")
             return True
             
         except Exception as v2_error:
-            print(f"⚠️ V2 (Client) Hatası: {v2_error}")
-            print("🔄 V1.1 (API) ile tekrar deneniyor... (Yedek Sistem)")
+            print(f"⚠️ Client Modu Hata Verdi (Bu normal olabilir): {v2_error}")
+            print("🔄 API Modu (Yedek) ile gönderiliyor...")
             
-            # Eğer Client çalışmazsa, eski usül API ile atar (Bu kesin çalışır)
+            # V1.1 Tweet (Yedek - Kesin Çözüm)
             api.update_status(status=caption, media_ids=[media.media_id])
-            print("🎉 TWEET ATILDI (V1.1 Yedek Sistem ile)!")
+            print("🎉 TWEET ATILDI (API Yedek Modu)!")
             return True
 
     except Exception as e:
-        print(f"❌ Kritik Twitter Hatası: {e}", flush=True)
+        print(f"❌ Kritik Hata: {e}", flush=True)
         return False
 
 # -----------------------------
 # MAIN
 # -----------------------------
 if __name__ == "__main__":
-    print("🚀 ORBIS ANIME BAŞLATILIYOR (ÇALIŞAN BOT ÖRNEĞİ)...", flush=True)
+    print("🚀 ORBIS ANIME (SAMİMİ MOD) BAŞLIYOR...", flush=True)
     
-    # İçerik Al
     name, img_url, caption = get_anime_content()
     
     if name and img_url and caption:
-        print("------------------------------------------------", flush=True)
-        print(f"🎯 Seçilen Anime: {name}", flush=True)
-        print(f"📝 Tweet: {caption[:50]}...", flush=True)
-        print("------------------------------------------------", flush=True)
+        print("------------------------------------------------")
+        print(f"🎯 Anime: {name}")
+        print(f"📝 Açıklama Önizleme:\n{caption[:100]}...")
+        print("------------------------------------------------")
         
         post_to_twitter(img_url, caption)
     else:
-        print("⚠️ İçerik oluşturulamadı.", flush=True)
+        print("⚠️ İçerik oluşturulamadı.")
